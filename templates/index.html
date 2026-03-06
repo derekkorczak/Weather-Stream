@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather Slideshow</title>
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+            background: black;
+            font-family: Arial, sans-serif;
+        }
+
+        #image-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: black;
+        }
+
+        .slide {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            object-fit: contain;
+            opacity: 0;
+            z-index: 1;
+            transition: opacity 1s ease-in-out;
+            will-change: opacity;
+        }
+
+        .slide.active {
+            opacity: 1;
+            z-index: 10;
+        }
+        
+        .slide.transitioning {
+            z-index: 20; /* Ensure incoming slide is on top */
+        }
+
+        #countdown-overlay {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            color: white;
+            font-size: 14px;
+            font-weight: bold;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 5px 8px;
+            border-radius: 3px;
+            z-index: 1000;
+        }
+
+        #info-overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            z-index: 1000;
+        }
+
+        #expiration-overlay {
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 5px 8px;
+            border-radius: 3px;
+        }
+
+        #duration-overlay {
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 5px 8px;
+            border-radius: 3px;
+        }
+
+        .overlay-hidden {
+            display: none !important;
+        }
+
+        #loading-indicator {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 18px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 20px;
+            border-radius: 10px;
+            z-index: 999;
+            display: none; /* Initially hidden */
+        }
+
+        #legend-overlay {
+            position: absolute;
+            top: 50px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 1000;
+            display: none;
+            max-width: 250px;
+        }
+
+        .legend-entry {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+            font-size: 12px;
+            color: white;
+        }
+
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            margin-right: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 2px;
+        }
+
+        .legend-text {
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+    </style>
+</head>
+<body>
+    <div id="image-container">
+        <div id="loading-indicator">Loading weather slideshow...</div>
+        <img id="slide-1" class="slide" src="" alt="Weather Image">
+        <img id="slide-2" class="slide" src="" alt="Weather Image">
+    </div>
+
+    <div id="countdown-overlay" class="overlay-hidden">30</div>
+    <div id="info-overlay" class="overlay-hidden">
+        <div id="expiration-overlay"></div>
+        <div id="duration-overlay"></div>
+    </div>
+    <div id="legend-overlay"></div>
+
+    <script>
+        let displayedImageUrl = '';
+        let displayedImageIndex = -1;
+        let currentCountdown = 30;  // Remaining seconds (from server)
+        let countdownInterval = null;
+        let isInitialLoad = true;
+        let isUpdating = false; // Prevent multiple simultaneous updates
+        let overlaysVisible = false; // Track overlay visibility state (default: hidden)
+        const WEATHER_MAP_INDEX = 8; // Index of the weather map image (fgf.png)
+        const RESYNC_INTERVAL_SEC = 15; // Re-fetch from server to stay in sync (avoids clock skew)
+        let secondsUntilResync = RESYNC_INTERVAL_SEC;
+        
+        // Slide management
+        let currentSlideId = null; // The ID of the currently visible slide
+
+        // Fetch legend data from the server
+        function fetchLegendData() {
+            return fetch('/api/legend')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.legend_entries) {
+                        return data.legend_entries;
+                    } else {
+                        console.error('No legend entries found in response');
+                        return [];
+                    }
+                })
+                .catch(error => {
+                    console.error('Error fetching legend data:', error);
+                    return [];
+                });
+        }
+
+        // Display or hide the legend based on current image index
+        function updateLegendDisplay(imageIndex) {
+            const legendOverlay = document.getElementById('legend-overlay');
+
+            if (imageIndex === WEATHER_MAP_INDEX) {
+                // Show legend for weather map (always visible, not controlled by overlay toggle)
+                fetchLegendData().then(legendEntries => {
+                    if (legendEntries.length > 0) {
+                        const legendHtml = legendEntries.map(entry => `
+                            <div class="legend-entry">
+                                <div class="legend-color" style="background-color: ${entry.color}"></div>
+                                <div class="legend-text">${entry.text}</div>
+                            </div>
+                        `).join('');
+                        legendOverlay.innerHTML = legendHtml;
+                        legendOverlay.style.display = 'block';
+                    } else {
+                        legendOverlay.style.display = 'none';
+                    }
+                });
+            } else {
+                // Hide legend for other images
+                legendOverlay.style.display = 'none';
+            }
+        }
+
+        // Start local countdown timer (no server timestamp - avoids clock skew over port forwarding)
+        function startCountdownTimer() {
+            if (countdownInterval) {
+                clearInterval(countdownInterval);
+            }
+
+            countdownInterval = setInterval(() => {
+                if (currentCountdown <= 0) {
+                    // Waiting for next slide (server advancing) or time to advance - fetch new data
+                    clearInterval(countdownInterval);
+                    updateSlideshow();
+                    return;
+                }
+                currentCountdown -= 1;
+                secondsUntilResync -= 1;
+
+                if (secondsUntilResync <= 0) {
+                    // Periodic resync with server so we don't drift
+                    secondsUntilResync = RESYNC_INTERVAL_SEC;
+                    updateSlideshow();
+                } else {
+                    // Update countdown display
+                    document.getElementById('countdown-overlay').textContent = currentCountdown;
+                }
+            }, 1000);
+        }
+
+        // Update the slideshow display
+        function updateSlideshow() {
+            // Prevent multiple simultaneous updates
+            if (isUpdating) {
+                console.log('Update already in progress, skipping');
+                return;
+            }
+            isUpdating = true;
+
+            fetch('/api/current-image')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('API Response:', {
+                        image_url: data.image_url,
+                        image_index: data.image_index,
+                        countdown: data.countdown,
+                        displayedImageUrl: displayedImageUrl,
+                        displayedImageIndex: displayedImageIndex
+                    });
+
+                    // Update countdown from server (remaining seconds; we tick down locally to avoid clock skew)
+                    currentCountdown = data.countdown;
+                    secondsUntilResync = RESYNC_INTERVAL_SEC;
+                    document.getElementById('countdown-overlay').textContent = currentCountdown;
+
+                    // Update expiration
+                    const expirationOverlay = document.getElementById('expiration-overlay');
+                    if (data.expiration) {
+                        expirationOverlay.textContent = data.expiration;
+                    } else {
+                        expirationOverlay.textContent = '';
+                    }
+
+                    // Update custom duration (show only when set, below expiration)
+                    const durationOverlay = document.getElementById('duration-overlay');
+                    if (data.custom_duration != null) {
+                        const mins = Math.floor(data.custom_duration / 60);
+                        const secs = data.custom_duration % 60;
+                        durationOverlay.textContent = mins > 0
+                            ? `Duration: ${mins}m ${secs}s`
+                            : `Duration: ${data.custom_duration}s`;
+                        durationOverlay.style.display = 'block';
+                    } else {
+                        durationOverlay.textContent = '';
+                        durationOverlay.style.display = 'none';
+                    }
+
+                    // Update image if URL changed or if image index changed
+                    const shouldUpdateImage = data.image_url && (data.image_url !== displayedImageUrl || data.image_index !== displayedImageIndex);
+                    
+                    if (shouldUpdateImage) {
+                        console.log('Updating image display');
+                        
+                        // Determine which slide to use
+                        const nextSlideId = currentSlideId === 'slide-1' ? 'slide-2' : 'slide-1';
+                        const nextSlide = document.getElementById(nextSlideId);
+                        const currentSlide = currentSlideId ? document.getElementById(currentSlideId) : null;
+                        
+                        // Update tracking variables immediately
+                        displayedImageUrl = data.image_url;
+                        displayedImageIndex = data.image_index;
+
+                        // Update legend display based on image index
+                        updateLegendDisplay(data.image_index);
+
+                        // Only show loading indicator on initial load
+                        if (isInitialLoad) {
+                            document.getElementById('loading-indicator').style.display = 'block';
+                        }
+
+                        // Clear any existing event handlers
+                        nextSlide.onload = null;
+                        nextSlide.onerror = null;
+
+                        // Handle load success
+                        nextSlide.onload = function() {
+                            console.log('Image loaded successfully for index', data.image_index);
+                            
+                            if (isInitialLoad) {
+                                document.getElementById('loading-indicator').style.display = 'none';
+                                isInitialLoad = false;
+                            }
+                            
+                            // Start transition
+                            // 1. Ensure next slide is on top
+                            nextSlide.classList.add('transitioning');
+                            
+                            // 2. Trigger fade in
+                            // Use requestAnimationFrame to ensure style application
+                            requestAnimationFrame(() => {
+                                nextSlide.classList.add('active');
+                            });
+                            
+                            // 3. After transition, cleanup
+                            setTimeout(() => {
+                                nextSlide.classList.remove('transitioning');
+                                if (currentSlide) {
+                                    currentSlide.classList.remove('active');
+                                }
+                                currentSlideId = nextSlideId;
+                                isUpdating = false;
+                            }, 1000); // Wait for transition duration
+                        };
+
+                        // Handle load error
+                        nextSlide.onerror = function() {
+                            console.error('Failed to load image directly:', data.image_url, 'for index', data.image_index);
+                            isUpdating = false; 
+                            
+                            // On error, try to refresh after delay
+                            setTimeout(() => {
+                                console.log('Retrying slideshow update after image load error');
+                                updateSlideshow();
+                            }, 1000);
+                            
+                            if (isInitialLoad) {
+                                document.getElementById('loading-indicator').style.display = 'none';
+                                isInitialLoad = false;
+                            }
+                        };
+
+                        // Set the image source
+                        const cacheBustUrl = data.image_url + (data.image_url.includes('?') ? '&' : '?') + '_t=' + Date.now();
+                        console.log('Setting image src to:', cacheBustUrl);
+                        nextSlide.src = cacheBustUrl;
+                        
+                    } else {
+                        // No image update needed
+                        isUpdating = false;
+                    }
+
+                    // Start local countdown timer
+                    startCountdownTimer();
+                })
+                .catch(error => {
+                    console.error('Error fetching slideshow data:', error);
+                    isUpdating = false;
+                    setTimeout(updateSlideshow, 5000);
+                });
+        }
+
+        // Toggle overlay visibility
+        function toggleOverlays() {
+            overlaysVisible = !overlaysVisible;
+            const countdownOverlay = document.getElementById('countdown-overlay');
+            const infoOverlay = document.getElementById('info-overlay');
+            const legendOverlay = document.getElementById('legend-overlay');
+
+            if (overlaysVisible) {
+                countdownOverlay.classList.remove('overlay-hidden');
+                infoOverlay.classList.remove('overlay-hidden');
+            } else {
+                countdownOverlay.classList.add('overlay-hidden');
+                infoOverlay.classList.add('overlay-hidden');
+            }
+        }
+
+        // Duration hotkey mapping: 1=15s, 2=30s, 3=45s, 4=60s, 5=90s, 6=120s, 7=180s, 8=240s, 9=300s, 0=600s
+        const DURATION_HOTKEYS = {
+            '1': 15, '2': 30, '3': 45, '4': 60, '5': 90,
+            '6': 120, '7': 180, '8': 240, '9': 300, '0': 600
+        };
+
+        // Handle keyboard shortcuts
+        document.addEventListener('keydown', function(event) {
+            const key = event.key.toLowerCase();
+
+            if (key === 't') {
+                toggleOverlays();
+                return;
+            }
+
+            // Duration hotkeys (0-9) work when overlays are visible
+            if (overlaysVisible && key in DURATION_HOTKEYS) {
+                const durationSeconds = DURATION_HOTKEYS[key];
+                fetch('/api/set-duration', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ duration_seconds: durationSeconds })
+                })
+                .then(response => {
+                    if (response.ok) {
+                        updateSlideshow();
+                    }
+                })
+                .catch(error => console.error('Error setting duration:', error));
+                return;
+            }
+
+            if (!overlaysVisible) {
+                return;
+            }
+
+            switch(key) {
+                case 'e':
+                    fetch('/api/expire', { method: 'POST' })
+                        .then(response => {
+                            if (response.ok) {
+                                updateSlideshow();
+                            }
+                        })
+                        .catch(error => console.error('Error expiring image:', error));
+                    break;
+
+                case 'd':
+                    const today = new Date();
+                    const defaultDate = today.getFullYear() + '-' +
+                                      String(today.getMonth() + 1).padStart(2, '0') + '-' +
+                                      String(today.getDate()).padStart(2, '0') + ' 23:00';
+                    const date = prompt('Enter expiration date and time (YYYY-MM-DD HH:MM):', defaultDate);
+                    if (date) {
+                        fetch('/api/set-expiration', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ expiration_date: date })
+                        })
+                        .then(response => {
+                            if (response.ok) {
+                                updateSlideshow();
+                            }
+                        })
+                        .catch(error => console.error('Error setting expiration:', error));
+                    }
+                    break;
+            }
+        });
+
+        // Handle right-click for next image
+        document.addEventListener('contextmenu', function(event) {
+            if (!overlaysVisible) {
+                return;
+            }
+
+            event.preventDefault();
+            fetch('/api/next', { method: 'POST' })
+                .then(response => {
+                    if (response.ok) {
+                        updateSlideshow();
+                    }
+                })
+                .catch(error => console.error('Error advancing to next image:', error));
+        });
+
+        // Initial load
+        updateSlideshow();
+    </script>
+</body>
+</html>

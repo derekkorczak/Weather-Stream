@@ -1,0 +1,21 @@
+# Weather-Stream stack for Portainer GitOps
+# Set SQL_* environment variables in Portainer (Stack > Editor > Environment variables)
+# or in a .env file (do not commit .env with secrets).
+
+services:
+  weather-stream:
+    build: .
+    # No 'image:' line - image is built from repo only. Avoids "pull access denied"
+    # when Portainer tries to pull from a registry on GitOps update.
+    container_name: weather-stream
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - SKIP_DEPENDENCY_CHECK=1
+      - SQL_SERVER=${SQL_SERVER}
+      - SQL_DATABASE=${SQL_DATABASE}
+      - SQL_USERNAME=${SQL_USERNAME}
+      - SQL_PASSWORD=${SQL_PASSWORD}
+    # Optional: use env_file in Portainer to point to a secret or env vars
+    # env_file: .env

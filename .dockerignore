@@ -1,0 +1,29 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+.venv
+venv
+ENV
+
+# IDE / OS
+.idea
+.vscode
+*.swp
+*.log
+.DS_Store
+Thumbs.db
+
+# Docs and local-only
+README.md
+*.md
+.env.*
+!.env.example
