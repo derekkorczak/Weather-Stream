@@ -515,7 +515,7 @@ class WeatherSlideshowServer:
             "https://www.weather.gov/images/fgf/wxstory/Tab4FileL.png?08370a8a653e121a7a20f2bd6a2e93e2",
             "https://www.weather.gov/images/fgf/wxstory/Tab5FileL.png?08370a8a653e121a7a20f2bd6a2e93e2",
             "https://www.wpc.ncep.noaa.gov/noaa/noaad1.gif?1680885921",
-            "https://www.spc.noaa.gov/products/outlook/day1otlk_1630.gif",
+            "https://www.spc.noaa.gov/products/outlook/day1otlk_1300.png",
             "https://radar.weather.gov/ridge/standard/KMVX_0.gif?refreshed=1680886770679",
             "https://www.weather.gov/wwamap/png/fgf.png",
             "https://graphical.weather.gov/images/fgf/MaxT1_fgf.png",
