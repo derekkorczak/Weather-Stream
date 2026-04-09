@@ -50,7 +50,7 @@ def _parse_build_timestamp(raw):
 
 
 def _compute_app_version():
-    """YYYY.MM.DD.TTTT from WEATHER_STREAM_BUILD_TIME, BUILD_TIME, version.txt, or now (dev)."""
+    """YYYY.MM.DD.TTTT from WEATHER_STREAM_BUILD_TIME, BUILD_TIME, version.txt, or now."""
     for env_key in ("WEATHER_STREAM_BUILD_TIME", "BUILD_TIME"):
         raw = os.environ.get(env_key)
         if raw:
@@ -69,7 +69,7 @@ def _compute_app_version():
         except (ValueError, OSError):
             pass
     dt = datetime.now()
-    return dt.strftime("%Y.%m.%d.%H%M") + " (dev)"
+    return dt.strftime("%Y.%m.%d.%H%M")
 
 
 APP_VERSION = _compute_app_version()
