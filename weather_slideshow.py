@@ -1,5 +1,6 @@
 import os
 import time
+from pathlib import Path
 from io import BytesIO
 import threading
 import json
@@ -13,6 +14,65 @@ import logging
 import requests
 from bs4 import BeautifulSoup
 import pyodbc
+
+
+def _parse_build_timestamp(raw):
+    """Parse ISO-style build time from env or version.txt into naive local datetime."""
+    s = (raw or "").strip()
+    if not s:
+        raise ValueError("empty timestamp")
+    if s.endswith("Z") and "+00:00" not in s:
+        s = s[:-1] + "+00:00"
+    dt = None
+    try:
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        pass
+    if dt is None:
+        for fmt in (
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%d %H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M",
+            "%Y-%m-%d %H:%M",
+        ):
+            try:
+                dt = datetime.strptime(s, fmt)
+                break
+            except ValueError:
+                continue
+    if dt is None:
+        raise ValueError(f"unrecognized timestamp: {raw!r}")
+    if dt.tzinfo is not None:
+        dt = dt.astimezone().replace(tzinfo=None)
+    return dt
+
+
+def _compute_app_version():
+    """YYYY.MM.DD.TTTT from WEATHER_STREAM_BUILD_TIME, BUILD_TIME, version.txt, or now (dev)."""
+    for env_key in ("WEATHER_STREAM_BUILD_TIME", "BUILD_TIME"):
+        raw = os.environ.get(env_key)
+        if raw:
+            try:
+                dt = _parse_build_timestamp(raw)
+                return dt.strftime("%Y.%m.%d.%H%M")
+            except (ValueError, OSError):
+                pass
+    version_file = Path(__file__).resolve().parent / "version.txt"
+    if version_file.is_file():
+        try:
+            raw = version_file.read_text(encoding="utf-8").strip()
+            if raw:
+                dt = _parse_build_timestamp(raw)
+                return dt.strftime("%Y.%m.%d.%H%M")
+        except (ValueError, OSError):
+            pass
+    dt = datetime.now()
+    return dt.strftime("%Y.%m.%d.%H%M") + " (dev)"
+
+
+APP_VERSION = _compute_app_version()
 
 
 def parse_expiration_datetime_input(raw):
@@ -173,7 +233,7 @@ class WeatherSlideshowServer:
     def setup_routes(self):
         @self.app.route('/')
         def index():
-            return render_template('index.html')
+            return render_template('index.html', app_version=APP_VERSION)
 
         @self.app.route('/api/current-image')
         def get_current_image():

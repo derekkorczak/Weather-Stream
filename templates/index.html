@@ -87,6 +87,19 @@
             border-radius: 3px;
         }
 
+        #version-overlay {
+            position: absolute;
+            bottom: 10px;
+            right: 10px;
+            color: white;
+            font-size: 12px;
+            font-weight: bold;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 5px 8px;
+            border-radius: 3px;
+            z-index: 1000;
+        }
+
         .overlay-hidden {
             display: none !important;
         }
@@ -153,6 +166,7 @@
         <div id="expiration-overlay"></div>
         <div id="duration-overlay"></div>
     </div>
+    <div id="version-overlay" class="overlay-hidden">{{ app_version }}</div>
     <div id="legend-overlay"></div>
 
     <script>
@@ -387,14 +401,16 @@
             overlaysVisible = !overlaysVisible;
             const countdownOverlay = document.getElementById('countdown-overlay');
             const infoOverlay = document.getElementById('info-overlay');
-            const legendOverlay = document.getElementById('legend-overlay');
+            const versionOverlay = document.getElementById('version-overlay');
 
             if (overlaysVisible) {
                 countdownOverlay.classList.remove('overlay-hidden');
                 infoOverlay.classList.remove('overlay-hidden');
+                versionOverlay.classList.remove('overlay-hidden');
             } else {
                 countdownOverlay.classList.add('overlay-hidden');
                 infoOverlay.classList.add('overlay-hidden');
+                versionOverlay.classList.add('overlay-hidden');
             }
         }
 
