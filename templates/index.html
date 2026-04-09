@@ -452,12 +452,16 @@
                                       String(today.getDate()).padStart(2, '0') + ' 23:00';
                     const date = prompt('Enter expiration date and time (YYYY-MM-DD HH:MM):', defaultDate);
                     if (date) {
+                        const expirationDate = date.trim();
+                        if (!expirationDate) {
+                            break;
+                        }
                         fetch('/api/set-expiration', {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
                             },
-                            body: JSON.stringify({ expiration_date: date })
+                            body: JSON.stringify({ expiration_date: expirationDate })
                         })
                         .then(response => {
                             if (response.ok) {

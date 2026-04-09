@@ -14,6 +14,26 @@ import requests
 from bs4 import BeautifulSoup
 import pyodbc
 
+
+def parse_expiration_datetime_input(raw):
+    """
+    Parse expiration from the 'd' prompt (YYYY-MM-DD HH:MM or with seconds).
+    Strips whitespace and accepts ISO 'T' between date and time so we never
+    build invalid strings like '... 15:30 :00' from trailing spaces.
+    """
+    s = (raw or "").strip()
+    if not s:
+        raise ValueError("empty expiration string")
+    s = s.replace("T", " ", 1).strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            return dt, dt.strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+    raise ValueError(f"Invalid date/time format: {raw!r}")
+
+
 def check_and_install_dependencies():
     """Check for required dependencies and install them if missing."""
     required_packages = {
@@ -342,9 +362,7 @@ class WeatherSlideshowServer:
                 if 0 <= current_index < len(self.image_urls):
                     url = self.image_urls[current_index]
                     try:
-                        # Parse the datetime
-                        expiration_str = f"{expiration_date}:00"
-                        expiration_dt = datetime.strptime(expiration_str, "%Y-%m-%d %H:%M:%S")
+                        expiration_dt, expiration_str = parse_expiration_datetime_input(expiration_date)
 
                         # Validate the date is in the future
                         if expiration_dt <= datetime.now():
