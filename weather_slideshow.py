@@ -75,11 +75,13 @@ def _compute_app_version():
 APP_VERSION = _compute_app_version()
 
 
-def parse_expiration_datetime_input(raw):
+def parse_expiration_datetime_input(raw, timezone_offset_minutes=None):
     """
     Parse expiration from the 'd' prompt (YYYY-MM-DD HH:MM or with seconds).
     Strips whitespace and accepts ISO 'T' between date and time so we never
     build invalid strings like '... 15:30 :00' from trailing spaces.
+    If timezone_offset_minutes is provided, treat the parsed value as client
+    local time and convert to UTC before returning.
     """
     s = (raw or "").strip()
     if not s:
@@ -87,7 +89,17 @@ def parse_expiration_datetime_input(raw):
     s = s.replace("T", " ", 1).strip()
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
         try:
-            dt = datetime.strptime(s, fmt)
+            local_dt = datetime.strptime(s, fmt)
+            dt = local_dt
+            if timezone_offset_minutes is not None:
+                try:
+                    tz_offset = int(timezone_offset_minutes)
+                except (TypeError, ValueError):
+                    raise ValueError(f"Invalid timezone offset: {timezone_offset_minutes!r}")
+                if tz_offset < -840 or tz_offset > 840:
+                    raise ValueError(f"Timezone offset out of range: {timezone_offset_minutes!r}")
+                # JS getTimezoneOffset(): UTC = local + offset minutes.
+                dt = local_dt + timedelta(minutes=tz_offset)
             return dt, dt.strftime("%Y-%m-%d %H:%M:%S")
         except ValueError:
             continue
@@ -254,7 +266,7 @@ class WeatherSlideshowServer:
                         expiration = expired_data.get('expiration')
                         if expiration:
                             expiration_dt = datetime.strptime(expiration, "%Y-%m-%d %H:%M:%S")
-                            if datetime.now() <= expiration_dt:
+                            if datetime.utcnow() <= expiration_dt:
                                 expiration_text = f"Expires: {expiration_dt.strftime('%Y-%m-%d %H:%M')}"
                             else:
                                 expiration_text = "Expired"
@@ -269,7 +281,7 @@ class WeatherSlideshowServer:
                             expiration = expired_data.get('expiration')
                             if expiration:
                                 expiration_dt = datetime.strptime(expiration, "%Y-%m-%d %H:%M:%S")
-                                if datetime.now() <= expiration_dt:
+                                if datetime.utcnow() <= expiration_dt:
                                     expiration_text = f"Expires: {expiration_dt.strftime('%Y-%m-%d %H:%M')}"
                                 else:
                                     expiration_text = "Expired"
@@ -412,7 +424,11 @@ class WeatherSlideshowServer:
             try:
                 data = request.get_json(silent=True) or {}
                 expiration_date = data.get('expiration_date')
-                logging.info(f"set-expiration request received: {expiration_date!r}")
+                timezone_offset_minutes = data.get('timezone_offset_minutes')
+                logging.info(
+                    f"set-expiration request received: {expiration_date!r} "
+                    f"(timezone_offset_minutes={timezone_offset_minutes!r})"
+                )
 
                 if not expiration_date:
                     logging.warning("set-expiration rejected: no expiration date provided")
@@ -424,10 +440,12 @@ class WeatherSlideshowServer:
                 if 0 <= current_index < len(self.image_urls):
                     url = self.image_urls[current_index]
                     try:
-                        expiration_dt, expiration_str = parse_expiration_datetime_input(expiration_date)
+                        expiration_dt, expiration_str = parse_expiration_datetime_input(
+                            expiration_date, timezone_offset_minutes
+                        )
 
-                        # Validate the date is in the future
-                        if expiration_dt <= datetime.now():
+                        # Validate against UTC now (stored expiration timestamps are UTC-naive).
+                        if expiration_dt <= datetime.utcnow():
                             logging.warning(
                                 f"set-expiration rejected: date is not in the future ({expiration_str}) for {url}"
                             )
@@ -788,7 +806,7 @@ class WeatherSlideshowServer:
                     elif expiration:
                         try:
                             expiration_dt = datetime.strptime(expiration, "%Y-%m-%d %H:%M:%S")
-                            now = datetime.now()
+                            now = datetime.utcnow()
                             if now > expiration_dt:
                                 logging.info(f"Image has passed expiration date: {expiration}")
                                 logging.info(f"Skipping expired image: {url}")

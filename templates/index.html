@@ -478,7 +478,10 @@
                             headers: {
                                 'Content-Type': 'application/json',
                             },
-                            body: JSON.stringify({ expiration_date: expirationDate })
+                            body: JSON.stringify({
+                                expiration_date: expirationDate,
+                                timezone_offset_minutes: new Date().getTimezoneOffset()
+                            })
                         })
                         .then(async response => {
                             const payload = await response.json().catch(() => ({}));
