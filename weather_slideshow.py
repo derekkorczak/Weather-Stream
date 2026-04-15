@@ -410,10 +410,12 @@ class WeatherSlideshowServer:
         @self.app.route('/api/set-expiration', methods=['POST'])
         def set_expiration():
             try:
-                data = request.get_json()
+                data = request.get_json(silent=True) or {}
                 expiration_date = data.get('expiration_date')
+                logging.info(f"set-expiration request received: {expiration_date!r}")
 
                 if not expiration_date:
+                    logging.warning("set-expiration rejected: no expiration date provided")
                     return jsonify({'status': 'error', 'message': 'No expiration date provided'}), 400
 
                 with self.state_lock:
@@ -426,6 +428,9 @@ class WeatherSlideshowServer:
 
                         # Validate the date is in the future
                         if expiration_dt <= datetime.now():
+                            logging.warning(
+                                f"set-expiration rejected: date is not in the future ({expiration_str}) for {url}"
+                            )
                             return jsonify({'status': 'error', 'message': 'Expiration date must be in the future'}), 400
 
                         # Get current image hash
@@ -446,9 +451,13 @@ class WeatherSlideshowServer:
                             logging.info(f"Image will expire on: {expiration_str}")
                             return jsonify({'status': 'ok'})
                         else:
+                            logging.warning(
+                                f"set-expiration failed fetching image {url}: HTTP {response.status_code}"
+                            )
                             return jsonify({'status': 'error', 'message': f'Failed to fetch image: HTTP {response.status_code}'}), 400
 
                     except ValueError as e:
+                        logging.warning(f"set-expiration rejected: invalid date format {expiration_date!r} ({e})")
                         return jsonify({'status': 'error', 'message': f'Invalid date/time format: {e}'}), 400
                     except requests.exceptions.Timeout:
                         logging.error(f"Timeout setting expiration for image {url}")

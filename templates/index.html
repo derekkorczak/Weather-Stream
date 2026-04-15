@@ -467,9 +467,10 @@
                                       String(today.getMonth() + 1).padStart(2, '0') + '-' +
                                       String(today.getDate()).padStart(2, '0') + ' 23:00';
                     const date = prompt('Enter expiration date and time (YYYY-MM-DD HH:MM):', defaultDate);
-                    if (date) {
+                    if (date !== null) {
                         const expirationDate = date.trim();
                         if (!expirationDate) {
+                            alert('Expiration date cannot be empty.');
                             break;
                         }
                         fetch('/api/set-expiration', {
@@ -479,10 +480,15 @@
                             },
                             body: JSON.stringify({ expiration_date: expirationDate })
                         })
-                        .then(response => {
-                            if (response.ok) {
-                                updateSlideshow();
+                        .then(async response => {
+                            const payload = await response.json().catch(() => ({}));
+                            if (!response.ok) {
+                                const message = payload.message || 'Failed to set expiration date.';
+                                console.warn('Set expiration failed:', message, payload);
+                                alert(message);
+                                return;
                             }
+                            updateSlideshow();
                         })
                         .catch(error => console.error('Error setting expiration:', error));
                     }
