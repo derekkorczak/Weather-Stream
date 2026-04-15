@@ -152,6 +152,70 @@
             overflow: hidden;
             text-overflow: ellipsis;
         }
+
+        #expiration-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 2000;
+        }
+
+        #expiration-modal-content {
+            background: #1f1f1f;
+            color: white;
+            border: 1px solid #555;
+            border-radius: 6px;
+            padding: 16px;
+            min-width: 320px;
+        }
+
+        #expiration-modal-content h3 {
+            margin: 0 0 12px 0;
+            font-size: 16px;
+        }
+
+        #expiration-modal-content label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+
+        #expiration-datetime-input {
+            width: 100%;
+            box-sizing: border-box;
+            margin-bottom: 12px;
+            padding: 8px;
+            font-size: 14px;
+            border-radius: 4px;
+            border: 1px solid #666;
+            background: #111;
+            color: white;
+        }
+
+        .expiration-modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+        }
+
+        .expiration-modal-actions button {
+            padding: 6px 12px;
+            border: 1px solid #666;
+            border-radius: 4px;
+            background: #2a2a2a;
+            color: white;
+            cursor: pointer;
+        }
+
+        .expiration-modal-actions button:hover {
+            background: #3a3a3a;
+        }
     </style>
 </head>
 <body>
@@ -168,6 +232,17 @@
     </div>
     <div id="version-overlay" class="overlay-hidden">{{ app_version }}</div>
     <div id="legend-overlay"></div>
+    <div id="expiration-modal">
+        <form id="expiration-modal-content">
+            <h3>Set expiration date/time</h3>
+            <label for="expiration-datetime-input">Local date/time</label>
+            <input id="expiration-datetime-input" type="datetime-local" step="60" required>
+            <div class="expiration-modal-actions">
+                <button id="expiration-cancel-btn" type="button">Cancel</button>
+                <button type="submit">Set expiration</button>
+            </div>
+        </form>
+    </div>
 
     <script>
         let displayedImageUrl = '';
@@ -177,6 +252,7 @@
         let isInitialLoad = true;
         let isUpdating = false; // Prevent multiple simultaneous updates
         let overlaysVisible = false; // Track overlay visibility state (default: hidden)
+        let countdownPaused = false; // Pauses local countdown while expiration modal is open
         const WEATHER_MAP_INDEX = 8; // Index of the weather map image (fgf.png)
         const RESYNC_INTERVAL_SEC = 15; // Re-fetch from server to stay in sync (avoids clock skew)
         let secondsUntilResync = RESYNC_INTERVAL_SEC;
@@ -235,6 +311,9 @@
             }
 
             countdownInterval = setInterval(() => {
+                if (countdownPaused) {
+                    return;
+                }
                 if (currentCountdown <= 0) {
                     // Waiting for next slide (server advancing) or time to advance - fetch new data
                     clearInterval(countdownInterval);
@@ -420,9 +499,89 @@
             '6': 120, '7': 180, '8': 240, '9': 300, '0': 600
         };
 
+        function isExpirationModalOpen() {
+            return document.getElementById('expiration-modal').style.display === 'flex';
+        }
+
+        function formatDateTimeLocal(date) {
+            return date.getFullYear() + '-' +
+                String(date.getMonth() + 1).padStart(2, '0') + '-' +
+                String(date.getDate()).padStart(2, '0') + 'T' +
+                String(date.getHours()).padStart(2, '0') + ':' +
+                String(date.getMinutes()).padStart(2, '0');
+        }
+
+        function getDefaultExpirationDateTime() {
+            const nextMidnight = new Date();
+            nextMidnight.setDate(nextMidnight.getDate() + 1);
+            nextMidnight.setHours(0, 0, 0, 0);
+            return nextMidnight;
+        }
+
+        function openExpirationModal() {
+            const modal = document.getElementById('expiration-modal');
+            const input = document.getElementById('expiration-datetime-input');
+            input.value = formatDateTimeLocal(getDefaultExpirationDateTime());
+            countdownPaused = true;
+            document.getElementById('countdown-overlay').textContent = 'Paused';
+            modal.style.display = 'flex';
+            input.focus();
+            input.select();
+        }
+
+        function closeExpirationModal() {
+            const modal = document.getElementById('expiration-modal');
+            modal.style.display = 'none';
+            countdownPaused = false;
+            document.getElementById('countdown-overlay').textContent = currentCountdown;
+        }
+
+        function submitExpirationDate(event) {
+            event.preventDefault();
+            const input = document.getElementById('expiration-datetime-input');
+            const localDateTime = input.value;
+            if (!localDateTime) {
+                alert('Expiration date cannot be empty.');
+                return;
+            }
+
+            const expirationDate = localDateTime.replace('T', ' ');
+            closeExpirationModal();
+
+            fetch('/api/set-expiration', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    expiration_date: expirationDate,
+                    timezone_offset_minutes: new Date().getTimezoneOffset()
+                })
+            })
+            .then(async response => {
+                const payload = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    const message = payload.message || 'Failed to set expiration date.';
+                    console.warn('Set expiration failed:', message, payload);
+                    alert(message);
+                    return;
+                }
+                updateSlideshow();
+            })
+            .catch(error => console.error('Error setting expiration:', error));
+        }
+
         // Handle keyboard shortcuts
         document.addEventListener('keydown', function(event) {
             const key = event.key.toLowerCase();
+
+            if (isExpirationModalOpen()) {
+                if (key === 'escape') {
+                    closeExpirationModal();
+                    updateSlideshow();
+                }
+                return;
+            }
 
             if (key === 't') {
                 toggleOverlays();
@@ -462,41 +621,15 @@
                     break;
 
                 case 'd':
-                    const today = new Date();
-                    const defaultDate = today.getFullYear() + '-' +
-                                      String(today.getMonth() + 1).padStart(2, '0') + '-' +
-                                      String(today.getDate()).padStart(2, '0') + ' 23:00';
-                    const date = prompt('Enter expiration date and time (YYYY-MM-DD HH:MM):', defaultDate);
-                    if (date !== null) {
-                        const expirationDate = date.trim();
-                        if (!expirationDate) {
-                            alert('Expiration date cannot be empty.');
-                            break;
-                        }
-                        fetch('/api/set-expiration', {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({
-                                expiration_date: expirationDate,
-                                timezone_offset_minutes: new Date().getTimezoneOffset()
-                            })
-                        })
-                        .then(async response => {
-                            const payload = await response.json().catch(() => ({}));
-                            if (!response.ok) {
-                                const message = payload.message || 'Failed to set expiration date.';
-                                console.warn('Set expiration failed:', message, payload);
-                                alert(message);
-                                return;
-                            }
-                            updateSlideshow();
-                        })
-                        .catch(error => console.error('Error setting expiration:', error));
-                    }
+                    openExpirationModal();
                     break;
             }
+        });
+
+        document.getElementById('expiration-modal-content').addEventListener('submit', submitExpirationDate);
+        document.getElementById('expiration-cancel-btn').addEventListener('click', () => {
+            closeExpirationModal();
+            updateSlideshow();
         });
 
         // Handle right-click for next image
