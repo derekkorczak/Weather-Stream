@@ -251,14 +251,34 @@
         let countdownInterval = null;
         let isInitialLoad = true;
         let isUpdating = false; // Prevent multiple simultaneous updates
+        let updateStartedAtMs = 0;
         let overlaysVisible = false; // Track overlay visibility state (default: hidden)
         let countdownPaused = false; // Pauses local countdown while expiration modal is open
         const WEATHER_MAP_INDEX = 8; // Index of the weather map image (fgf.png)
         const RESYNC_INTERVAL_SEC = 15; // Re-fetch from server to stay in sync (avoids clock skew)
+        const API_FETCH_TIMEOUT_MS = 15000;
+        const IMAGE_LOAD_TIMEOUT_MS = 35000;
+        const UPDATE_STALE_TIMEOUT_MS = 45000;
         let secondsUntilResync = RESYNC_INTERVAL_SEC;
         
         // Slide management
         let currentSlideId = null; // The ID of the currently visible slide
+
+        function clearStuckUpdateState(reason) {
+            if (!isUpdating) {
+                return;
+            }
+            console.warn('Clearing stuck update state:', reason);
+            isUpdating = false;
+            updateStartedAtMs = 0;
+        }
+
+        function fetchJsonWithTimeout(url, timeoutMs) {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+            return fetch(url, { signal: controller.signal })
+                .finally(() => clearTimeout(timeoutId));
+        }
 
         // Fetch legend data from the server
         function fetchLegendData() {
@@ -336,14 +356,18 @@
 
         // Update the slideshow display
         function updateSlideshow() {
+            if (isUpdating && updateStartedAtMs && (Date.now() - updateStartedAtMs > UPDATE_STALE_TIMEOUT_MS)) {
+                clearStuckUpdateState('update watchdog timeout');
+            }
             // Prevent multiple simultaneous updates
             if (isUpdating) {
                 console.log('Update already in progress, skipping');
                 return;
             }
             isUpdating = true;
+            updateStartedAtMs = Date.now();
 
-            fetch('/api/current-image')
+            fetchJsonWithTimeout('/api/current-image', API_FETCH_TIMEOUT_MS)
                 .then(response => response.json())
                 .then(data => {
                     console.log('API Response:', {
@@ -407,6 +431,20 @@
                         // Clear any existing event handlers
                         nextSlide.onload = null;
                         nextSlide.onerror = null;
+                        let imageLoadTimeoutId = null;
+
+                        const finishImageUpdate = (didLoad, reason) => {
+                            if (imageLoadTimeoutId) {
+                                clearTimeout(imageLoadTimeoutId);
+                                imageLoadTimeoutId = null;
+                            }
+                            if (didLoad) {
+                                console.log('Image transition finished:', reason);
+                            } else {
+                                console.warn('Image transition failed/timed out:', reason);
+                            }
+                            clearStuckUpdateState(reason);
+                        };
 
                         // Handle load success
                         nextSlide.onload = function() {
@@ -434,14 +472,14 @@
                                     currentSlide.classList.remove('active');
                                 }
                                 currentSlideId = nextSlideId;
-                                isUpdating = false;
+                                finishImageUpdate(true, 'image loaded');
                             }, 1000); // Wait for transition duration
                         };
 
                         // Handle load error
                         nextSlide.onerror = function() {
                             console.error('Failed to load image directly:', data.image_url, 'for index', data.image_index);
-                            isUpdating = false; 
+                            finishImageUpdate(false, 'image load error');
                             
                             // On error, try to refresh after delay
                             setTimeout(() => {
@@ -459,10 +497,17 @@
                         const cacheBustUrl = data.image_url + (data.image_url.includes('?') ? '&' : '?') + '_t=' + Date.now();
                         console.log('Setting image src to:', cacheBustUrl);
                         nextSlide.src = cacheBustUrl;
+                        imageLoadTimeoutId = setTimeout(() => {
+                            // If the browser never reports load/error for this request, recover.
+                            nextSlide.onload = null;
+                            nextSlide.onerror = null;
+                            finishImageUpdate(false, 'image load timeout');
+                            setTimeout(updateSlideshow, 1000);
+                        }, IMAGE_LOAD_TIMEOUT_MS);
                         
                     } else {
                         // No image update needed
-                        isUpdating = false;
+                        clearStuckUpdateState('no image update needed');
                     }
 
                     // Start local countdown timer
@@ -470,7 +515,7 @@
                 })
                 .catch(error => {
                     console.error('Error fetching slideshow data:', error);
-                    isUpdating = false;
+                    clearStuckUpdateState('api fetch error');
                     setTimeout(updateSlideshow, 5000);
                 });
         }
