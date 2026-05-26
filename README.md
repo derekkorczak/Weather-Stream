@@ -24,6 +24,29 @@ To run as a container and use **Portainer’s GitOps updates** (auto-redeploy on
 
 5. **Deploy.** The app will be available on port **8080**.
 
+## Database tables
+
+The app requires two tables in the configured SQL Server database:
+
+```sql
+CREATE TABLE ExpiredImages (
+    url NVARCHAR(450) PRIMARY KEY,
+    image_hash NVARCHAR(450),
+    expiration_date DATETIME NULL
+);
+
+CREATE TABLE SlideDurations (
+    url NVARCHAR(450) PRIMARY KEY,
+    duration_seconds INT NOT NULL
+);
+```
+
+`SlideDurations` persists per-slide custom display durations set from the admin console.
+
+## Admin console
+
+Browse to `/admin` for the management UI: per-slide thumbnails, live countdown, and buttons for expire-now, set/clear expiration, set/clear duration, jump-to-slide, and skip-to-next. The slideshow at `/` is display-only.
+
 ### Local Docker
 
 ```bash

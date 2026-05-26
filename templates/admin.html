@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather Slideshow — Admin</title>
+    <style>
+        :root {
+            --bg: #0f1115;
+            --panel: #1a1d24;
+            --panel-border: #2a2f3a;
+            --text: #e6e8eb;
+            --muted: #8a93a1;
+            --accent: #4ea1ff;
+            --live: #ff4757;
+            --ok: #2ecc71;
+            --warn: #f39c12;
+        }
+        * { box-sizing: border-box; }
+        body, html { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: -apple-system, system-ui, Segoe UI, Roboto, Arial, sans-serif; }
+        header {
+            display: flex; align-items: center; gap: 16px;
+            padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--panel-border);
+            position: sticky; top: 0; z-index: 100;
+        }
+        header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+        header .version { color: var(--muted); font-size: 12px; font-family: monospace; }
+        header .spacer { flex: 1; }
+        header a, .btn-link { color: var(--accent); text-decoration: none; font-size: 14px; }
+        header a:hover { text-decoration: underline; }
+
+        .summary-strip {
+            display: flex; gap: 24px; padding: 12px 20px;
+            background: #131620; border-bottom: 1px solid var(--panel-border);
+            font-size: 13px; flex-wrap: wrap;
+        }
+        .summary-strip .item { display: flex; gap: 6px; align-items: baseline; }
+        .summary-strip .label { color: var(--muted); }
+        .summary-strip .value { font-weight: 600; }
+
+        .toolbar { padding: 12px 20px; display: flex; gap: 10px; flex-wrap: wrap; }
+        button {
+            background: #232831; color: var(--text); border: 1px solid var(--panel-border);
+            padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 13px;
+        }
+        button:hover:not(:disabled) { background: #2d343f; border-color: #3a4250; }
+        button:disabled { opacity: 0.4; cursor: not-allowed; }
+        button.primary { background: var(--accent); border-color: var(--accent); color: #0a0c10; }
+        button.primary:hover:not(:disabled) { background: #6cb3ff; }
+        button.danger { border-color: #5a2a30; color: #ff7b85; }
+        button.danger:hover:not(:disabled) { background: #3a1a20; }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+            gap: 16px;
+            padding: 0 20px 32px 20px;
+        }
+
+        .card {
+            background: var(--panel);
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .card.live { border-color: var(--live); box-shadow: 0 0 0 1px var(--live); }
+        .card .thumb-wrap {
+            position: relative;
+            width: 100%;
+            background: #06080c;
+            aspect-ratio: 16 / 10;
+            display: flex; align-items: center; justify-content: center;
+            overflow: hidden;
+        }
+        .card .thumb-wrap img {
+            max-width: 100%; max-height: 100%; object-fit: contain;
+        }
+        .live-badge {
+            position: absolute; top: 8px; left: 8px;
+            background: var(--live); color: white;
+            padding: 3px 8px; border-radius: 3px;
+            font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+        }
+        .index-badge {
+            position: absolute; top: 8px; right: 8px;
+            background: rgba(0,0,0,0.7); color: white;
+            padding: 3px 8px; border-radius: 3px;
+            font-size: 11px; font-family: monospace;
+        }
+
+        .card-body { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+        .filename { font-size: 12px; color: var(--muted); font-family: monospace; word-break: break-all; }
+        .countdown-line { font-size: 13px; }
+        .countdown-line .secs { color: var(--live); font-weight: 700; }
+        .status-line { font-size: 12px; }
+        .status-active { color: var(--ok); }
+        .status-expired { color: var(--warn); }
+        .status-manual { color: var(--warn); }
+        .status-none { color: var(--muted); }
+        .duration-line { font-size: 12px; color: var(--muted); }
+
+        .actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+        .actions button { font-size: 12px; padding: 4px 8px; }
+        .duration-edit { display: flex; gap: 4px; align-items: center; }
+        .duration-edit input {
+            width: 70px; padding: 4px 6px; background: #0c0e13;
+            border: 1px solid var(--panel-border); border-radius: 3px; color: var(--text);
+            font-size: 12px;
+        }
+
+        /* Modal */
+        .modal-backdrop {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.65);
+            display: none; align-items: center; justify-content: center; z-index: 1000;
+        }
+        .modal-backdrop.visible { display: flex; }
+        .modal {
+            background: var(--panel); border: 1px solid var(--panel-border); border-radius: 8px;
+            padding: 20px; min-width: 360px; max-width: 90vw;
+        }
+        .modal h3 { margin: 0 0 12px 0; font-size: 16px; }
+        .modal label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+        .modal input[type="datetime-local"] {
+            width: 100%; padding: 8px; background: #0c0e13;
+            border: 1px solid var(--panel-border); border-radius: 4px; color: var(--text);
+            font-size: 14px; margin-bottom: 14px;
+        }
+        .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Weather Slideshow — Admin</h1>
+        <span class="version">{{ app_version }}</span>
+        <span class="spacer"></span>
+        <a href="/" target="_blank">Open Slideshow &rarr;</a>
+    </header>
+
+    <div class="summary-strip">
+        <div class="item"><span class="label">Live slide:</span><span class="value" id="summary-live-index">—</span></div>
+        <div class="item"><span class="label">Countdown:</span><span class="value" id="summary-countdown">—</span></div>
+        <div class="item"><span class="label">Next change:</span><span class="value" id="summary-next-change">—</span></div>
+        <div class="item"><span class="label">Default duration:</span><span class="value" id="summary-default-duration">—</span></div>
+    </div>
+
+    <div class="toolbar">
+        <button class="primary" id="btn-skip">Skip to next image</button>
+        <button id="btn-refresh">Refresh now</button>
+    </div>
+
+    <div class="grid" id="grid"></div>
+
+    <div class="modal-backdrop" id="exp-modal">
+        <form class="modal" id="exp-modal-form">
+            <h3>Set expiration — Slide <span id="exp-modal-index"></span></h3>
+            <label for="exp-modal-input">Local date/time</label>
+            <input id="exp-modal-input" type="datetime-local" step="60" required>
+            <div class="modal-actions">
+                <button type="button" id="exp-modal-cancel">Cancel</button>
+                <button type="submit" class="primary">Set expiration</button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        const POLL_INTERVAL_MS = 1000;
+        const cardCache = new Map(); // index -> { card, els, lastImgUrl }
+        let latestState = null;
+        let pendingModalIndex = null;
+        // Local tick countdown: server gives us countdown each second, but we tick locally between polls.
+        let liveCountdownLocal = 0;
+        let liveIndex = -1;
+        let defaultDuration = 30;
+        let nextChangeTs = 0;
+
+        function fmtLocalTime(ts) {
+            const d = new Date(ts * 1000);
+            return d.toLocaleTimeString();
+        }
+        function fmtUtcStringAsLocal(s) {
+            // server returns "YYYY-MM-DD HH:MM:SS" UTC
+            if (!s) return '';
+            const iso = s.replace(' ', 'T') + 'Z';
+            const d = new Date(iso);
+            if (isNaN(d.getTime())) return s;
+            return d.toLocaleString();
+        }
+        function fmtDateTimeLocalInput(date) {
+            return date.getFullYear() + '-' +
+                String(date.getMonth() + 1).padStart(2, '0') + '-' +
+                String(date.getDate()).padStart(2, '0') + 'T' +
+                String(date.getHours()).padStart(2, '0') + ':' +
+                String(date.getMinutes()).padStart(2, '0');
+        }
+
+        function makeCard(slide) {
+            const card = document.createElement('div');
+            card.className = 'card';
+            card.dataset.index = slide.index;
+            card.innerHTML = `
+                <div class="thumb-wrap">
+                    <img loading="lazy" alt="Slide ${slide.index}">
+                    <div class="live-badge" style="display:none;">LIVE</div>
+                    <div class="index-badge">#${slide.index}</div>
+                </div>
+                <div class="card-body">
+                    <div class="filename"></div>
+                    <div class="countdown-line" style="display:none;"></div>
+                    <div class="status-line"></div>
+                    <div class="duration-line"></div>
+                    <div class="actions">
+                        <button data-action="expire" class="danger">Expire now</button>
+                        <button data-action="set-exp">Set expiration…</button>
+                        <button data-action="clear-exp">Clear expiration</button>
+                        <button data-action="jump">Jump to this</button>
+                    </div>
+                    <div class="actions duration-edit">
+                        <input type="number" min="1" max="3600" placeholder="secs">
+                        <button data-action="set-dur">Set duration</button>
+                        <button data-action="clear-dur">Clear duration</button>
+                    </div>
+                </div>
+            `;
+            const els = {
+                img: card.querySelector('img'),
+                live: card.querySelector('.live-badge'),
+                filename: card.querySelector('.filename'),
+                countdown: card.querySelector('.countdown-line'),
+                status: card.querySelector('.status-line'),
+                duration: card.querySelector('.duration-line'),
+                btnExpire: card.querySelector('[data-action="expire"]'),
+                btnSetExp: card.querySelector('[data-action="set-exp"]'),
+                btnClearExp: card.querySelector('[data-action="clear-exp"]'),
+                btnJump: card.querySelector('[data-action="jump"]'),
+                durInput: card.querySelector('input[type="number"]'),
+                btnSetDur: card.querySelector('[data-action="set-dur"]'),
+                btnClearDur: card.querySelector('[data-action="clear-dur"]'),
+            };
+
+            els.btnExpire.addEventListener('click', () => {
+                if (!confirm(`Expire slide #${slide.index} now?`)) return;
+                postJson('/api/expire', { index: slide.index });
+            });
+            els.btnSetExp.addEventListener('click', () => openExpirationModal(slide.index));
+            els.btnClearExp.addEventListener('click', () => {
+                if (!confirm(`Clear expiration on slide #${slide.index}?`)) return;
+                postJson('/api/clear-expiration', { index: slide.index });
+            });
+            els.btnJump.addEventListener('click', () => {
+                postJson('/api/jump', { index: slide.index });
+            });
+            els.btnSetDur.addEventListener('click', () => {
+                const v = parseInt(els.durInput.value, 10);
+                if (!Number.isFinite(v) || v < 1 || v > 3600) {
+                    alert('Duration must be between 1 and 3600 seconds.');
+                    return;
+                }
+                postJson('/api/set-duration', { index: slide.index, duration_seconds: v });
+            });
+            els.btnClearDur.addEventListener('click', () => {
+                postJson('/api/clear-duration', { index: slide.index });
+            });
+
+            return { card, els, lastImgUrl: '' };
+        }
+
+        function postJson(url, body) {
+            return fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body || {}),
+            }).then(async r => {
+                const payload = await r.json().catch(() => ({}));
+                if (!r.ok) {
+                    alert(payload.message || `Request failed (${r.status})`);
+                    throw new Error(payload.message || 'request failed');
+                }
+                refresh();
+                return payload;
+            }).catch(err => {
+                console.error(url, err);
+            });
+        }
+
+        function renderCard(entry, slide) {
+            const { card, els } = entry;
+            card.classList.toggle('live', slide.is_live);
+            els.live.style.display = slide.is_live ? 'block' : 'none';
+
+            // image — only set src if URL changed (to avoid flicker)
+            if (entry.lastImgUrl !== slide.proxied_url) {
+                els.img.src = slide.proxied_url;
+                entry.lastImgUrl = slide.proxied_url;
+            }
+
+            // filename — shorten URL to last path segment
+            try {
+                const u = new URL(slide.url);
+                const parts = u.pathname.split('/').filter(Boolean);
+                els.filename.textContent = parts.length ? parts[parts.length - 1] : u.hostname;
+                els.filename.title = slide.url;
+            } catch (e) {
+                els.filename.textContent = slide.url;
+            }
+
+            // countdown (live only) — handled by tick(); we just toggle visibility
+            if (slide.is_live) {
+                els.countdown.style.display = '';
+            } else {
+                els.countdown.style.display = 'none';
+                els.countdown.textContent = '';
+            }
+
+            // status
+            const hasExp = (slide.expiration_status === 'active' || slide.expiration_status === 'expired');
+            const hasManual = slide.expiration_status === 'manual';
+            els.status.className = 'status-line';
+            if (slide.expiration_status === 'active') {
+                els.status.classList.add('status-active');
+                els.status.textContent = `Active until ${fmtUtcStringAsLocal(slide.expiration)}`;
+            } else if (slide.expiration_status === 'expired') {
+                els.status.classList.add('status-expired');
+                els.status.textContent = `Expired (was ${fmtUtcStringAsLocal(slide.expiration)})`;
+            } else if (slide.expiration_status === 'manual') {
+                els.status.classList.add('status-manual');
+                els.status.textContent = 'Manually expired';
+            } else {
+                els.status.classList.add('status-none');
+                els.status.textContent = 'No expiration';
+            }
+            els.btnClearExp.disabled = !(hasExp || hasManual);
+
+            // duration
+            if (slide.custom_duration != null) {
+                els.duration.textContent = `Duration: ${slide.custom_duration}s (custom)`;
+                els.btnClearDur.disabled = false;
+            } else {
+                els.duration.textContent = `Duration: ${slide.effective_duration}s (default)`;
+                els.btnClearDur.disabled = true;
+            }
+        }
+
+        function renderGrid(state) {
+            const grid = document.getElementById('grid');
+            for (const slide of state.slides) {
+                let entry = cardCache.get(slide.index);
+                if (!entry) {
+                    entry = makeCard(slide);
+                    cardCache.set(slide.index, entry);
+                    grid.appendChild(entry.card);
+                }
+                renderCard(entry, slide);
+            }
+        }
+
+        function renderSummary(state) {
+            document.getElementById('summary-live-index').textContent = `#${state.current_index}`;
+            document.getElementById('summary-default-duration').textContent = `${state.default_duration}s`;
+            updateCountdownDisplay();
+        }
+
+        function updateCountdownDisplay() {
+            document.getElementById('summary-countdown').textContent = `${liveCountdownLocal}s`;
+            document.getElementById('summary-next-change').textContent = fmtLocalTime(nextChangeTs);
+            const entry = cardCache.get(liveIndex);
+            if (entry) {
+                entry.els.countdown.innerHTML =
+                    `<span class="secs">${liveCountdownLocal}s</span> · changes at ${fmtLocalTime(nextChangeTs)}`;
+            }
+        }
+
+        function refresh() {
+            return fetch('/api/slides')
+                .then(r => r.json())
+                .then(state => {
+                    latestState = state;
+                    liveIndex = state.current_index;
+                    liveCountdownLocal = state.countdown;
+                    nextChangeTs = state.next_change_timestamp;
+                    defaultDuration = state.default_duration;
+                    renderGrid(state);
+                    renderSummary(state);
+                })
+                .catch(err => console.error('refresh failed', err));
+        }
+
+        // Local 1s ticker for smooth countdown between polls
+        setInterval(() => {
+            if (liveCountdownLocal > 0) {
+                liveCountdownLocal -= 1;
+                updateCountdownDisplay();
+            }
+        }, 1000);
+
+        // Poll every second
+        setInterval(refresh, POLL_INTERVAL_MS);
+        refresh();
+
+        // Toolbar
+        document.getElementById('btn-skip').addEventListener('click', () => postJson('/api/next', {}));
+        document.getElementById('btn-refresh').addEventListener('click', () => refresh());
+
+        // Expiration modal
+        const expModal = document.getElementById('exp-modal');
+        const expForm = document.getElementById('exp-modal-form');
+        const expInput = document.getElementById('exp-modal-input');
+        const expIdxLabel = document.getElementById('exp-modal-index');
+
+        function openExpirationModal(index) {
+            pendingModalIndex = index;
+            expIdxLabel.textContent = `#${index}`;
+            const next = new Date();
+            next.setDate(next.getDate() + 1);
+            next.setHours(0, 0, 0, 0);
+            expInput.value = fmtDateTimeLocalInput(next);
+            expModal.classList.add('visible');
+            expInput.focus();
+        }
+        function closeExpirationModal() {
+            expModal.classList.remove('visible');
+            pendingModalIndex = null;
+        }
+        document.getElementById('exp-modal-cancel').addEventListener('click', closeExpirationModal);
+        expModal.addEventListener('click', e => { if (e.target === expModal) closeExpirationModal(); });
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape' && expModal.classList.contains('visible')) closeExpirationModal();
+        });
+        expForm.addEventListener('submit', e => {
+            e.preventDefault();
+            if (pendingModalIndex == null) return;
+            const v = expInput.value;
+            if (!v) { alert('Expiration date cannot be empty.'); return; }
+            const idx = pendingModalIndex;
+            closeExpirationModal();
+            postJson('/api/set-expiration', {
+                index: idx,
+                expiration_date: v.replace('T', ' '),
+                timezone_offset_minutes: new Date().getTimezoneOffset(),
+            });
+        });
+    </script>
+</body>
+</html>

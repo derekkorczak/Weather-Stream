@@ -374,47 +374,77 @@ class WeatherSlideshowServer:
                 from flask import abort
                 abort(500)
 
+        @self.app.route('/admin')
+        def admin():
+            return render_template('admin.html', app_version=APP_VERSION)
+
+        @self.app.route('/api/slides')
+        def get_slides():
+            try:
+                from urllib.parse import quote
+                with self.state_lock:
+                    current_index = self.slideshow_state['current_image_index']
+                    countdown = self.slideshow_state['countdown']
+                with self.expired_lock:
+                    expired_snapshot = dict(self.expired_images)
+                with self.duration_lock:
+                    durations_snapshot = dict(self.slide_durations)
+
+                now_utc = datetime.utcnow()
+                slides = []
+                for idx, url in enumerate(self.image_urls):
+                    expired_data = expired_snapshot.get(url)
+                    expiration = None
+                    status = 'none'
+                    if expired_data:
+                        expiration = expired_data.get('expiration')
+                        if expiration is None:
+                            status = 'manual'
+                        else:
+                            try:
+                                exp_dt = datetime.strptime(expiration, "%Y-%m-%d %H:%M:%S")
+                                status = 'active' if now_utc <= exp_dt else 'expired'
+                            except ValueError:
+                                status = 'expired'
+                    custom_duration = durations_snapshot.get(url)
+                    effective_duration = custom_duration if custom_duration is not None else self.display_duration
+                    slides.append({
+                        'index': idx,
+                        'url': url,
+                        'proxied_url': f'/api/image?url={quote(url, safe="")}',
+                        'is_live': idx == current_index,
+                        'expiration': expiration,
+                        'expiration_status': status,
+                        'custom_duration': custom_duration,
+                        'effective_duration': effective_duration,
+                    })
+
+                response = jsonify({
+                    'current_index': current_index,
+                    'countdown': countdown,
+                    'next_change_timestamp': int(time.time()) + countdown,
+                    'default_duration': self.display_duration,
+                    'slides': slides,
+                })
+                response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+                return response
+            except Exception as e:
+                logging.error(f"Error in get_slides: {e}")
+                return jsonify({'error': 'Internal server error'}), 500
+
         @self.app.route('/api/expire', methods=['POST'])
         def expire_image():
             try:
-                with self.state_lock:
-                    current_index = self.slideshow_state['current_image_index']
-
-                if 0 <= current_index < len(self.image_urls):
-                    url = self.image_urls[current_index]
-                    logging.info(f"Expiring image at index {current_index}: {url}")
-                    try:
-                        headers = self.get_browser_headers()
-                        response = requests.get(url, headers=headers, timeout=30)
-
-                        if response.status_code == 200:
-                            image_hash = self.get_image_hash(response.content)
-
-                            # Store hash with no expiration (with expired lock)
-                            with self.expired_lock:
-                                self.expired_images[url] = {
-                                    'hash': image_hash,
-                                    'expiration': None
-                                }
-                                if not self.save_expired_images():
-                                    return jsonify({'status': 'error', 'message': 'Failed to save expiration data'}), 500
-                            logging.info(f"Successfully expired image: {url}")
-                            return jsonify({'status': 'ok'})
-                        else:
-                            logging.warning(f"Failed to expire image - status {response.status_code}: {url}")
-                            return jsonify({'status': 'error', 'message': f'Failed to fetch image: HTTP {response.status_code}'}), 400
-                    except requests.exceptions.Timeout:
-                        logging.error(f"Timeout expiring image {url}")
-                        return jsonify({'status': 'error', 'message': 'Request timeout'}), 408
-                    except requests.exceptions.ConnectionError:
-                        logging.error(f"Connection error expiring image {url}")
-                        return jsonify({'status': 'error', 'message': 'Connection error'}), 502
-                    except Exception as e:
-                        logging.error(f"Error expiring image {url}: {e}")
-                        logging.error(f"Exception type: {type(e).__name__}")
-                        return jsonify({'status': 'error', 'message': 'Internal error'}), 500
-                else:
-                    return jsonify({'status': 'error', 'message': 'Invalid image index'}), 400
+                data = request.get_json(silent=True) or {}
+                idx, err = self._resolve_target_index(data)
+                if err:
+                    return jsonify({'status': 'error', 'message': err}), 400
+                url = self.image_urls[idx]
+                logging.info(f"Expiring image at index {idx}: {url}")
+                ok, msg, code = self._expire_url(url)
+                if ok:
+                    return jsonify({'status': 'ok'})
+                return jsonify({'status': 'error', 'message': msg}), code
             except Exception as e:
                 logging.error(f"Unexpected error in expire_image: {e}")
                 return jsonify({'status': 'error', 'message': 'Internal server error'}), 500
@@ -425,106 +455,99 @@ class WeatherSlideshowServer:
                 data = request.get_json(silent=True) or {}
                 expiration_date = data.get('expiration_date')
                 timezone_offset_minutes = data.get('timezone_offset_minutes')
-                logging.info(
-                    f"set-expiration request received: {expiration_date!r} "
-                    f"(timezone_offset_minutes={timezone_offset_minutes!r})"
-                )
-
                 if not expiration_date:
-                    logging.warning("set-expiration rejected: no expiration date provided")
                     return jsonify({'status': 'error', 'message': 'No expiration date provided'}), 400
-
-                with self.state_lock:
-                    current_index = self.slideshow_state['current_image_index']
-
-                if 0 <= current_index < len(self.image_urls):
-                    url = self.image_urls[current_index]
-                    try:
-                        expiration_dt, expiration_str = parse_expiration_datetime_input(
-                            expiration_date, timezone_offset_minutes
-                        )
-
-                        # Validate against UTC now (stored expiration timestamps are UTC-naive).
-                        if expiration_dt <= datetime.utcnow():
-                            logging.warning(
-                                f"set-expiration rejected: date is not in the future ({expiration_str}) for {url}"
-                            )
-                            return jsonify({'status': 'error', 'message': 'Expiration date must be in the future'}), 400
-
-                        # Get current image hash
-                        logging.info(f"Setting expiration for image: {url}")
-                        headers = self.get_browser_headers()
-                        response = requests.get(url, headers=headers, timeout=30)
-
-                        if response.status_code == 200:
-                            image_hash = self.get_image_hash(response.content)
-                            # Store both hash and expiration (with expired lock)
-                            with self.expired_lock:
-                                self.expired_images[url] = {
-                                    'hash': image_hash,
-                                    'expiration': expiration_str
-                                }
-                                if not self.save_expired_images():
-                                    return jsonify({'status': 'error', 'message': 'Failed to save expiration data'}), 500
-                            logging.info(f"Image will expire on: {expiration_str}")
-                            return jsonify({'status': 'ok'})
-                        else:
-                            logging.warning(
-                                f"set-expiration failed fetching image {url}: HTTP {response.status_code}"
-                            )
-                            return jsonify({'status': 'error', 'message': f'Failed to fetch image: HTTP {response.status_code}'}), 400
-
-                    except ValueError as e:
-                        logging.warning(f"set-expiration rejected: invalid date format {expiration_date!r} ({e})")
-                        return jsonify({'status': 'error', 'message': f'Invalid date/time format: {e}'}), 400
-                    except requests.exceptions.Timeout:
-                        logging.error(f"Timeout setting expiration for image {url}")
-                        return jsonify({'status': 'error', 'message': 'Request timeout'}), 408
-                    except requests.exceptions.ConnectionError:
-                        logging.error(f"Connection error setting expiration for image {url}")
-                        return jsonify({'status': 'error', 'message': 'Connection error'}), 502
-                    except Exception as e:
-                        logging.error(f"Error setting expiration date: {e}")
-                        return jsonify({'status': 'error', 'message': 'Internal error'}), 500
-                else:
-                    return jsonify({'status': 'error', 'message': 'Invalid image index'}), 400
+                idx, err = self._resolve_target_index(data)
+                if err:
+                    return jsonify({'status': 'error', 'message': err}), 400
+                url = self.image_urls[idx]
+                logging.info(f"Setting expiration for index {idx} ({url}): {expiration_date!r}")
+                ok, msg, code = self._set_expiration_for_url(url, expiration_date, timezone_offset_minutes)
+                if ok:
+                    return jsonify({'status': 'ok'})
+                return jsonify({'status': 'error', 'message': msg}), code
             except Exception as e:
                 logging.error(f"Unexpected error in set_expiration: {e}")
+                return jsonify({'status': 'error', 'message': 'Internal server error'}), 500
+
+        @self.app.route('/api/clear-expiration', methods=['POST'])
+        def clear_expiration():
+            try:
+                data = request.get_json(silent=True) or {}
+                idx, err = self._resolve_target_index(data)
+                if err:
+                    return jsonify({'status': 'error', 'message': err}), 400
+                url = self.image_urls[idx]
+                ok, msg, code = self._clear_expiration_for_url(url)
+                if ok:
+                    return jsonify({'status': 'ok'})
+                return jsonify({'status': 'error', 'message': msg}), code
+            except Exception as e:
+                logging.error(f"Unexpected error in clear_expiration: {e}")
                 return jsonify({'status': 'error', 'message': 'Internal server error'}), 500
 
         @self.app.route('/api/set-duration', methods=['POST'])
         def set_duration():
             try:
-                data = request.get_json()
+                data = request.get_json(silent=True) or {}
                 duration_seconds = data.get('duration_seconds')
-
                 if duration_seconds is None:
                     return jsonify({'status': 'error', 'message': 'No duration provided'}), 400
-
                 try:
                     duration_seconds = int(duration_seconds)
                 except (TypeError, ValueError):
                     return jsonify({'status': 'error', 'message': 'Invalid duration'}), 400
-
                 if duration_seconds < 1 or duration_seconds > 3600:
                     return jsonify({'status': 'error', 'message': 'Duration must be between 1 and 3600 seconds'}), 400
 
+                idx, err = self._resolve_target_index(data)
+                if err:
+                    return jsonify({'status': 'error', 'message': err}), 400
+                url = self.image_urls[idx]
                 with self.state_lock:
-                    current_index = self.slideshow_state['current_image_index']
-
-                if 0 <= current_index < len(self.image_urls):
-                    url = self.image_urls[current_index]
-                    with self.duration_lock:
-                        self.slide_durations[url] = duration_seconds
-                    with self.state_lock:
-                        self.slideshow_state['display_duration'] = duration_seconds
-                        self.slideshow_state['countdown'] = duration_seconds
-                    logging.info(f"Set slide duration to {duration_seconds}s for: {url}")
-                    return jsonify({'status': 'ok', 'duration_seconds': duration_seconds})
-                else:
-                    return jsonify({'status': 'error', 'message': 'Invalid image index'}), 400
+                    is_current = (idx == self.slideshow_state['current_image_index'])
+                self._set_duration_for_url(url, duration_seconds, is_current)
+                return jsonify({'status': 'ok', 'duration_seconds': duration_seconds})
             except Exception as e:
                 logging.error(f"Unexpected error in set_duration: {e}")
+                return jsonify({'status': 'error', 'message': 'Internal server error'}), 500
+
+        @self.app.route('/api/clear-duration', methods=['POST'])
+        def clear_duration():
+            try:
+                data = request.get_json(silent=True) or {}
+                idx, err = self._resolve_target_index(data)
+                if err:
+                    return jsonify({'status': 'error', 'message': err}), 400
+                url = self.image_urls[idx]
+                with self.state_lock:
+                    is_current = (idx == self.slideshow_state['current_image_index'])
+                self._clear_duration_for_url(url, is_current)
+                return jsonify({'status': 'ok'})
+            except Exception as e:
+                logging.error(f"Unexpected error in clear_duration: {e}")
+                return jsonify({'status': 'error', 'message': 'Internal server error'}), 500
+
+        @self.app.route('/api/jump', methods=['POST'])
+        def jump_to_slide():
+            try:
+                data = request.get_json(silent=True) or {}
+                if data.get('index') is None:
+                    return jsonify({'status': 'error', 'message': 'index is required'}), 400
+                idx, err = self._resolve_target_index(data)
+                if err:
+                    return jsonify({'status': 'error', 'message': err}), 400
+                url = self.image_urls[idx]
+                duration = self.get_duration_for_url(url)
+                with self.state_lock:
+                    self.slideshow_state['current_image_index'] = idx
+                    self.slideshow_state['countdown'] = duration
+                    self.slideshow_state['display_duration'] = duration
+                    self.slideshow_state['advancing'] = False
+                logging.info(f"Jumped to slide index {idx}")
+                return jsonify({'status': 'ok'})
+            except Exception as e:
+                logging.error(f"Unexpected error in jump_to_slide: {e}")
                 return jsonify({'status': 'error', 'message': 'Internal server error'}), 500
 
         @self.app.route('/api/next', methods=['POST'])
@@ -612,6 +635,9 @@ class WeatherSlideshowServer:
         # Load expired images
         with self.state_lock:
             self.expired_images = self.load_expired_images()
+        # Load persisted custom slide durations
+        with self.duration_lock:
+            self.slide_durations = self.load_slide_durations()
         
     def check_odbc_driver(self):
         try:
@@ -669,6 +695,19 @@ class WeatherSlideshowServer:
                     )
                     ''')
                     raise Exception("ExpiredImages table does not exist")
+
+                # Check if SlideDurations table exists
+                cursor.execute("SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = 'SlideDurations'")
+                durations_exists = cursor.fetchone()[0] > 0
+                if not durations_exists:
+                    print("Warning: SlideDurations table does not exist. Please create it with the following SQL:")
+                    print('''
+                    CREATE TABLE SlideDurations (
+                        url NVARCHAR(450) PRIMARY KEY,
+                        duration_seconds INT NOT NULL
+                    )
+                    ''')
+                    raise Exception("SlideDurations table does not exist")
 
                 print("Database initialized successfully")
             finally:
@@ -757,6 +796,166 @@ class WeatherSlideshowServer:
                 logging.warning(f"Attempt {attempt + 1} to save expired images failed: {e}. Retrying...")
                 time.sleep(0.5)
             
+    def load_slide_durations(self):
+        for attempt in range(3):
+            try:
+                durations = {}
+                conn = self.get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute('SELECT url, duration_seconds FROM SlideDurations')
+                    for url, secs in cursor.fetchall():
+                        durations[url] = int(secs)
+                    return durations
+                finally:
+                    conn.close()
+            except Exception as e:
+                if attempt == 2:
+                    logging.error(f"Failed to load slide durations after 3 attempts: {e}")
+                    return {}
+                logging.warning(f"Attempt {attempt + 1} to load slide durations failed: {e}. Retrying...")
+                time.sleep(0.5)
+
+    def _persist_slide_duration(self, url, seconds):
+        for attempt in range(3):
+            try:
+                conn = self.get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute('''
+                        MERGE SlideDurations AS target
+                        USING (SELECT ? AS url, ? AS duration_seconds) AS src
+                        ON target.url = src.url
+                        WHEN MATCHED THEN UPDATE SET duration_seconds = src.duration_seconds
+                        WHEN NOT MATCHED THEN INSERT (url, duration_seconds) VALUES (src.url, src.duration_seconds);
+                    ''', (url, int(seconds)))
+                    conn.commit()
+                    return True
+                finally:
+                    conn.close()
+            except Exception as e:
+                if attempt == 2:
+                    logging.error(f"Failed to persist slide duration for {url} after 3 attempts: {e}")
+                    return False
+                logging.warning(f"Attempt {attempt + 1} to persist slide duration failed: {e}. Retrying...")
+                time.sleep(0.5)
+
+    def _delete_slide_duration(self, url):
+        for attempt in range(3):
+            try:
+                conn = self.get_db_connection()
+                try:
+                    cursor = conn.cursor()
+                    cursor.execute('DELETE FROM SlideDurations WHERE url = ?', (url,))
+                    conn.commit()
+                    return True
+                finally:
+                    conn.close()
+            except Exception as e:
+                if attempt == 2:
+                    logging.error(f"Failed to delete slide duration for {url} after 3 attempts: {e}")
+                    return False
+                logging.warning(f"Attempt {attempt + 1} to delete slide duration failed: {e}. Retrying...")
+                time.sleep(0.5)
+
+    # ----- URL-based helpers (used by both current-image and index-based routes) -----
+
+    def _expire_url(self, url):
+        """Mark the image at URL as manually expired (no expiration date)."""
+        try:
+            headers = self.get_browser_headers()
+            response = requests.get(url, headers=headers, timeout=30)
+            if response.status_code != 200:
+                return False, f'Failed to fetch image: HTTP {response.status_code}', 400
+            image_hash = self.get_image_hash(response.content)
+            with self.expired_lock:
+                self.expired_images[url] = {'hash': image_hash, 'expiration': None}
+                if not self.save_expired_images():
+                    return False, 'Failed to save expiration data', 500
+            logging.info(f"Successfully expired image: {url}")
+            return True, 'ok', 200
+        except requests.exceptions.Timeout:
+            return False, 'Request timeout', 408
+        except requests.exceptions.ConnectionError:
+            return False, 'Connection error', 502
+        except Exception as e:
+            logging.error(f"Error expiring image {url}: {e}")
+            return False, 'Internal error', 500
+
+    def _set_expiration_for_url(self, url, expiration_date_raw, timezone_offset_minutes):
+        try:
+            expiration_dt, expiration_str = parse_expiration_datetime_input(
+                expiration_date_raw, timezone_offset_minutes
+            )
+        except ValueError as e:
+            return False, f'Invalid date/time format: {e}', 400
+        if expiration_dt <= datetime.utcnow():
+            return False, 'Expiration date must be in the future', 400
+        try:
+            headers = self.get_browser_headers()
+            response = requests.get(url, headers=headers, timeout=30)
+            if response.status_code != 200:
+                return False, f'Failed to fetch image: HTTP {response.status_code}', 400
+            image_hash = self.get_image_hash(response.content)
+            with self.expired_lock:
+                self.expired_images[url] = {'hash': image_hash, 'expiration': expiration_str}
+                if not self.save_expired_images():
+                    return False, 'Failed to save expiration data', 500
+            logging.info(f"Image {url} will expire on: {expiration_str}")
+            return True, 'ok', 200
+        except requests.exceptions.Timeout:
+            return False, 'Request timeout', 408
+        except requests.exceptions.ConnectionError:
+            return False, 'Connection error', 502
+        except Exception as e:
+            logging.error(f"Error setting expiration for {url}: {e}")
+            return False, 'Internal error', 500
+
+    def _clear_expiration_for_url(self, url):
+        with self.expired_lock:
+            if url in self.expired_images:
+                del self.expired_images[url]
+                if not self.save_expired_images():
+                    return False, 'Failed to save expiration data', 500
+        logging.info(f"Cleared expiration for: {url}")
+        return True, 'ok', 200
+
+    def _set_duration_for_url(self, url, seconds, is_current):
+        with self.duration_lock:
+            self.slide_durations[url] = int(seconds)
+        self._persist_slide_duration(url, seconds)
+        if is_current:
+            with self.state_lock:
+                self.slideshow_state['display_duration'] = int(seconds)
+                self.slideshow_state['countdown'] = int(seconds)
+        logging.info(f"Set slide duration to {seconds}s for: {url}")
+        return True, 'ok', 200
+
+    def _clear_duration_for_url(self, url, is_current):
+        with self.duration_lock:
+            self.slide_durations.pop(url, None)
+        self._delete_slide_duration(url)
+        if is_current:
+            with self.state_lock:
+                self.slideshow_state['display_duration'] = self.display_duration
+                self.slideshow_state['countdown'] = self.display_duration
+        logging.info(f"Cleared custom duration for: {url}")
+        return True, 'ok', 200
+
+    def _resolve_target_index(self, data):
+        """Resolve target slide index from request JSON body, defaulting to current."""
+        idx = data.get('index') if data else None
+        if idx is None:
+            with self.state_lock:
+                return self.slideshow_state['current_image_index'], None
+        try:
+            idx = int(idx)
+        except (TypeError, ValueError):
+            return None, 'Invalid index'
+        if not (0 <= idx < len(self.image_urls)):
+            return None, 'Invalid index'
+        return idx, None
+
     def get_image_hash(self, image_data):
         return hashlib.sha256(image_data).hexdigest()
 
@@ -823,6 +1022,7 @@ class WeatherSlideshowServer:
             if clear_duration_for_url:
                 with self.duration_lock:
                     self.slide_durations.pop(clear_duration_for_url, None)
+                self._delete_slide_duration(clear_duration_for_url)
 
             # Return a mock object to indicate success - we don't need the actual PIL image for slideshow validation
             return True

@@ -41,67 +41,9 @@
             opacity: 1;
             z-index: 10;
         }
-        
+
         .slide.transitioning {
-            z-index: 20; /* Ensure incoming slide is on top */
-        }
-
-        #countdown-overlay {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            color: white;
-            font-size: 14px;
-            font-weight: bold;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 5px 8px;
-            border-radius: 3px;
-            z-index: 1000;
-        }
-
-        #info-overlay {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-            z-index: 1000;
-        }
-
-        #expiration-overlay {
-            color: white;
-            font-size: 12px;
-            font-weight: bold;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 5px 8px;
-            border-radius: 3px;
-        }
-
-        #duration-overlay {
-            color: white;
-            font-size: 12px;
-            font-weight: bold;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 5px 8px;
-            border-radius: 3px;
-        }
-
-        #version-overlay {
-            position: absolute;
-            bottom: 10px;
-            right: 10px;
-            color: white;
-            font-size: 12px;
-            font-weight: bold;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 5px 8px;
-            border-radius: 3px;
-            z-index: 1000;
-        }
-
-        .overlay-hidden {
-            display: none !important;
+            z-index: 20;
         }
 
         #loading-indicator {
@@ -115,12 +57,12 @@
             padding: 20px;
             border-radius: 10px;
             z-index: 999;
-            display: none; /* Initially hidden */
+            display: none;
         }
 
         #legend-overlay {
             position: absolute;
-            top: 50px;
+            top: 10px;
             left: 10px;
             background: rgba(0, 0, 0, 0.8);
             padding: 10px;
@@ -153,69 +95,17 @@
             text-overflow: ellipsis;
         }
 
-        #expiration-modal {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            display: none;
-            justify-content: center;
-            align-items: center;
-            background: rgba(0, 0, 0, 0.7);
-            z-index: 2000;
+        #admin-link {
+            position: absolute;
+            bottom: 8px;
+            right: 10px;
+            color: rgba(255, 255, 255, 0.35);
+            font-size: 11px;
+            text-decoration: none;
+            z-index: 1000;
+            font-family: monospace;
         }
-
-        #expiration-modal-content {
-            background: #1f1f1f;
-            color: white;
-            border: 1px solid #555;
-            border-radius: 6px;
-            padding: 16px;
-            min-width: 320px;
-        }
-
-        #expiration-modal-content h3 {
-            margin: 0 0 12px 0;
-            font-size: 16px;
-        }
-
-        #expiration-modal-content label {
-            display: block;
-            margin-bottom: 8px;
-            font-size: 13px;
-        }
-
-        #expiration-datetime-input {
-            width: 100%;
-            box-sizing: border-box;
-            margin-bottom: 12px;
-            padding: 8px;
-            font-size: 14px;
-            border-radius: 4px;
-            border: 1px solid #666;
-            background: #111;
-            color: white;
-        }
-
-        .expiration-modal-actions {
-            display: flex;
-            justify-content: flex-end;
-            gap: 8px;
-        }
-
-        .expiration-modal-actions button {
-            padding: 6px 12px;
-            border: 1px solid #666;
-            border-radius: 4px;
-            background: #2a2a2a;
-            color: white;
-            cursor: pointer;
-        }
-
-        .expiration-modal-actions button:hover {
-            background: #3a3a3a;
-        }
+        #admin-link:hover { color: rgba(255, 255, 255, 0.9); }
     </style>
 </head>
 <body>
@@ -225,49 +115,27 @@
         <img id="slide-2" class="slide" src="" alt="Weather Image">
     </div>
 
-    <div id="countdown-overlay" class="overlay-hidden">30</div>
-    <div id="info-overlay" class="overlay-hidden">
-        <div id="expiration-overlay"></div>
-        <div id="duration-overlay"></div>
-    </div>
-    <div id="version-overlay" class="overlay-hidden">{{ app_version }}</div>
     <div id="legend-overlay"></div>
-    <div id="expiration-modal">
-        <form id="expiration-modal-content">
-            <h3>Set expiration date/time</h3>
-            <label for="expiration-datetime-input">Local date/time</label>
-            <input id="expiration-datetime-input" type="datetime-local" step="60" required>
-            <div class="expiration-modal-actions">
-                <button id="expiration-cancel-btn" type="button">Cancel</button>
-                <button type="submit">Set expiration</button>
-            </div>
-        </form>
-    </div>
+    <a id="admin-link" href="/admin">Admin &rarr; ({{ app_version }})</a>
 
     <script>
         let displayedImageUrl = '';
         let displayedImageIndex = -1;
-        let currentCountdown = 30;  // Remaining seconds (from server)
+        let currentCountdown = 30;
         let countdownInterval = null;
         let isInitialLoad = true;
-        let isUpdating = false; // Prevent multiple simultaneous updates
+        let isUpdating = false;
         let updateStartedAtMs = 0;
-        let overlaysVisible = false; // Track overlay visibility state (default: hidden)
-        let countdownPaused = false; // Pauses local countdown while expiration modal is open
-        const WEATHER_MAP_INDEX = 8; // Index of the weather map image (fgf.png)
-        const RESYNC_INTERVAL_SEC = 15; // Re-fetch from server to stay in sync (avoids clock skew)
+        const WEATHER_MAP_INDEX = 8;
+        const RESYNC_INTERVAL_SEC = 15;
         const API_FETCH_TIMEOUT_MS = 15000;
         const IMAGE_LOAD_TIMEOUT_MS = 35000;
         const UPDATE_STALE_TIMEOUT_MS = 45000;
         let secondsUntilResync = RESYNC_INTERVAL_SEC;
-        
-        // Slide management
-        let currentSlideId = null; // The ID of the currently visible slide
+        let currentSlideId = null;
 
         function clearStuckUpdateState(reason) {
-            if (!isUpdating) {
-                return;
-            }
+            if (!isUpdating) return;
             console.warn('Clearing stuck update state:', reason);
             isUpdating = false;
             updateStartedAtMs = 0;
@@ -276,241 +144,119 @@
         function fetchJsonWithTimeout(url, timeoutMs) {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-            return fetch(url, { signal: controller.signal })
-                .finally(() => clearTimeout(timeoutId));
+            return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timeoutId));
         }
 
-        // Fetch legend data from the server
         function fetchLegendData() {
             return fetch('/api/legend')
-                .then(response => response.json())
-                .then(data => {
-                    if (data.legend_entries) {
-                        return data.legend_entries;
-                    } else {
-                        console.error('No legend entries found in response');
-                        return [];
-                    }
-                })
-                .catch(error => {
-                    console.error('Error fetching legend data:', error);
-                    return [];
-                });
+                .then(r => r.json())
+                .then(d => d.legend_entries || [])
+                .catch(err => { console.error('Error fetching legend:', err); return []; });
         }
 
-        // Display or hide the legend based on current image index
         function updateLegendDisplay(imageIndex) {
             const legendOverlay = document.getElementById('legend-overlay');
-
             if (imageIndex === WEATHER_MAP_INDEX) {
-                // Show legend for weather map (always visible, not controlled by overlay toggle)
-                fetchLegendData().then(legendEntries => {
-                    if (legendEntries.length > 0) {
-                        const legendHtml = legendEntries.map(entry => `
+                fetchLegendData().then(entries => {
+                    if (entries.length > 0) {
+                        legendOverlay.innerHTML = entries.map(e => `
                             <div class="legend-entry">
-                                <div class="legend-color" style="background-color: ${entry.color}"></div>
-                                <div class="legend-text">${entry.text}</div>
-                            </div>
-                        `).join('');
-                        legendOverlay.innerHTML = legendHtml;
+                                <div class="legend-color" style="background-color: ${e.color}"></div>
+                                <div class="legend-text">${e.text}</div>
+                            </div>`).join('');
                         legendOverlay.style.display = 'block';
                     } else {
                         legendOverlay.style.display = 'none';
                     }
                 });
             } else {
-                // Hide legend for other images
                 legendOverlay.style.display = 'none';
             }
         }
 
-        // Start local countdown timer (no server timestamp - avoids clock skew over port forwarding)
         function startCountdownTimer() {
-            if (countdownInterval) {
-                clearInterval(countdownInterval);
-            }
-
+            if (countdownInterval) clearInterval(countdownInterval);
             countdownInterval = setInterval(() => {
-                if (countdownPaused) {
-                    return;
-                }
                 if (currentCountdown <= 0) {
-                    // Waiting for next slide (server advancing) or time to advance - fetch new data
                     clearInterval(countdownInterval);
                     updateSlideshow();
                     return;
                 }
                 currentCountdown -= 1;
                 secondsUntilResync -= 1;
-
                 if (secondsUntilResync <= 0) {
-                    // Periodic resync with server so we don't drift
                     secondsUntilResync = RESYNC_INTERVAL_SEC;
                     updateSlideshow();
-                } else {
-                    // Update countdown display
-                    document.getElementById('countdown-overlay').textContent = currentCountdown;
                 }
             }, 1000);
         }
 
-        // Update the slideshow display
         function updateSlideshow() {
             if (isUpdating && updateStartedAtMs && (Date.now() - updateStartedAtMs > UPDATE_STALE_TIMEOUT_MS)) {
                 clearStuckUpdateState('update watchdog timeout');
             }
-            // Prevent multiple simultaneous updates
-            if (isUpdating) {
-                console.log('Update already in progress, skipping');
-                return;
-            }
+            if (isUpdating) return;
             isUpdating = true;
             updateStartedAtMs = Date.now();
 
             fetchJsonWithTimeout('/api/current-image', API_FETCH_TIMEOUT_MS)
-                .then(response => response.json())
+                .then(r => r.json())
                 .then(data => {
-                    console.log('API Response:', {
-                        image_url: data.image_url,
-                        image_index: data.image_index,
-                        countdown: data.countdown,
-                        displayedImageUrl: displayedImageUrl,
-                        displayedImageIndex: displayedImageIndex
-                    });
-
-                    // Update countdown from server (remaining seconds; we tick down locally to avoid clock skew)
                     currentCountdown = data.countdown;
                     secondsUntilResync = RESYNC_INTERVAL_SEC;
-                    document.getElementById('countdown-overlay').textContent = currentCountdown;
 
-                    // Update expiration
-                    const expirationOverlay = document.getElementById('expiration-overlay');
-                    if (data.expiration) {
-                        expirationOverlay.textContent = data.expiration;
-                    } else {
-                        expirationOverlay.textContent = '';
-                    }
-
-                    // Update custom duration (show only when set, below expiration)
-                    const durationOverlay = document.getElementById('duration-overlay');
-                    if (data.custom_duration != null) {
-                        const mins = Math.floor(data.custom_duration / 60);
-                        const secs = data.custom_duration % 60;
-                        durationOverlay.textContent = mins > 0
-                            ? `Duration: ${mins}m ${secs}s`
-                            : `Duration: ${data.custom_duration}s`;
-                        durationOverlay.style.display = 'block';
-                    } else {
-                        durationOverlay.textContent = '';
-                        durationOverlay.style.display = 'none';
-                    }
-
-                    // Update image if URL changed or if image index changed
                     const shouldUpdateImage = data.image_url && (data.image_url !== displayedImageUrl || data.image_index !== displayedImageIndex);
-                    
                     if (shouldUpdateImage) {
-                        console.log('Updating image display');
-                        
-                        // Determine which slide to use
                         const nextSlideId = currentSlideId === 'slide-1' ? 'slide-2' : 'slide-1';
                         const nextSlide = document.getElementById(nextSlideId);
                         const currentSlide = currentSlideId ? document.getElementById(currentSlideId) : null;
-                        
-                        // Update tracking variables immediately
                         displayedImageUrl = data.image_url;
                         displayedImageIndex = data.image_index;
-
-                        // Update legend display based on image index
                         updateLegendDisplay(data.image_index);
+                        if (isInitialLoad) document.getElementById('loading-indicator').style.display = 'block';
 
-                        // Only show loading indicator on initial load
-                        if (isInitialLoad) {
-                            document.getElementById('loading-indicator').style.display = 'block';
-                        }
-
-                        // Clear any existing event handlers
                         nextSlide.onload = null;
                         nextSlide.onerror = null;
                         let imageLoadTimeoutId = null;
-
                         const finishImageUpdate = (didLoad, reason) => {
-                            if (imageLoadTimeoutId) {
-                                clearTimeout(imageLoadTimeoutId);
-                                imageLoadTimeoutId = null;
-                            }
-                            if (didLoad) {
-                                console.log('Image transition finished:', reason);
-                            } else {
-                                console.warn('Image transition failed/timed out:', reason);
-                            }
+                            if (imageLoadTimeoutId) { clearTimeout(imageLoadTimeoutId); imageLoadTimeoutId = null; }
                             clearStuckUpdateState(reason);
                         };
 
-                        // Handle load success
                         nextSlide.onload = function() {
-                            console.log('Image loaded successfully for index', data.image_index);
-                            
                             if (isInitialLoad) {
                                 document.getElementById('loading-indicator').style.display = 'none';
                                 isInitialLoad = false;
                             }
-                            
-                            // Start transition
-                            // 1. Ensure next slide is on top
                             nextSlide.classList.add('transitioning');
-                            
-                            // 2. Trigger fade in
-                            // Use requestAnimationFrame to ensure style application
-                            requestAnimationFrame(() => {
-                                nextSlide.classList.add('active');
-                            });
-                            
-                            // 3. After transition, cleanup
+                            requestAnimationFrame(() => nextSlide.classList.add('active'));
                             setTimeout(() => {
                                 nextSlide.classList.remove('transitioning');
-                                if (currentSlide) {
-                                    currentSlide.classList.remove('active');
-                                }
+                                if (currentSlide) currentSlide.classList.remove('active');
                                 currentSlideId = nextSlideId;
                                 finishImageUpdate(true, 'image loaded');
-                            }, 1000); // Wait for transition duration
-                        };
-
-                        // Handle load error
-                        nextSlide.onerror = function() {
-                            console.error('Failed to load image directly:', data.image_url, 'for index', data.image_index);
-                            finishImageUpdate(false, 'image load error');
-                            
-                            // On error, try to refresh after delay
-                            setTimeout(() => {
-                                console.log('Retrying slideshow update after image load error');
-                                updateSlideshow();
                             }, 1000);
-                            
+                        };
+                        nextSlide.onerror = function() {
+                            console.error('Failed to load image:', data.image_url);
+                            finishImageUpdate(false, 'image load error');
+                            setTimeout(updateSlideshow, 1000);
                             if (isInitialLoad) {
                                 document.getElementById('loading-indicator').style.display = 'none';
                                 isInitialLoad = false;
                             }
                         };
-
-                        // Set the image source
                         const cacheBustUrl = data.image_url + (data.image_url.includes('?') ? '&' : '?') + '_t=' + Date.now();
-                        console.log('Setting image src to:', cacheBustUrl);
                         nextSlide.src = cacheBustUrl;
                         imageLoadTimeoutId = setTimeout(() => {
-                            // If the browser never reports load/error for this request, recover.
                             nextSlide.onload = null;
                             nextSlide.onerror = null;
                             finishImageUpdate(false, 'image load timeout');
                             setTimeout(updateSlideshow, 1000);
                         }, IMAGE_LOAD_TIMEOUT_MS);
-                        
                     } else {
-                        // No image update needed
                         clearStuckUpdateState('no image update needed');
                     }
-
-                    // Start local countdown timer
                     startCountdownTimer();
                 })
                 .catch(error => {
@@ -520,180 +266,6 @@
                 });
         }
 
-        // Toggle overlay visibility
-        function toggleOverlays() {
-            overlaysVisible = !overlaysVisible;
-            const countdownOverlay = document.getElementById('countdown-overlay');
-            const infoOverlay = document.getElementById('info-overlay');
-            const versionOverlay = document.getElementById('version-overlay');
-
-            if (overlaysVisible) {
-                countdownOverlay.classList.remove('overlay-hidden');
-                infoOverlay.classList.remove('overlay-hidden');
-                versionOverlay.classList.remove('overlay-hidden');
-            } else {
-                countdownOverlay.classList.add('overlay-hidden');
-                infoOverlay.classList.add('overlay-hidden');
-                versionOverlay.classList.add('overlay-hidden');
-            }
-        }
-
-        // Duration hotkey mapping: 1=15s, 2=30s, 3=45s, 4=60s, 5=90s, 6=120s, 7=180s, 8=240s, 9=300s, 0=600s
-        const DURATION_HOTKEYS = {
-            '1': 15, '2': 30, '3': 45, '4': 60, '5': 90,
-            '6': 120, '7': 180, '8': 240, '9': 300, '0': 600
-        };
-
-        function isExpirationModalOpen() {
-            return document.getElementById('expiration-modal').style.display === 'flex';
-        }
-
-        function formatDateTimeLocal(date) {
-            return date.getFullYear() + '-' +
-                String(date.getMonth() + 1).padStart(2, '0') + '-' +
-                String(date.getDate()).padStart(2, '0') + 'T' +
-                String(date.getHours()).padStart(2, '0') + ':' +
-                String(date.getMinutes()).padStart(2, '0');
-        }
-
-        function getDefaultExpirationDateTime() {
-            const nextMidnight = new Date();
-            nextMidnight.setDate(nextMidnight.getDate() + 1);
-            nextMidnight.setHours(0, 0, 0, 0);
-            return nextMidnight;
-        }
-
-        function openExpirationModal() {
-            const modal = document.getElementById('expiration-modal');
-            const input = document.getElementById('expiration-datetime-input');
-            input.value = formatDateTimeLocal(getDefaultExpirationDateTime());
-            countdownPaused = true;
-            document.getElementById('countdown-overlay').textContent = 'Paused';
-            modal.style.display = 'flex';
-            input.focus();
-            input.select();
-        }
-
-        function closeExpirationModal() {
-            const modal = document.getElementById('expiration-modal');
-            modal.style.display = 'none';
-            countdownPaused = false;
-            document.getElementById('countdown-overlay').textContent = currentCountdown;
-        }
-
-        function submitExpirationDate(event) {
-            event.preventDefault();
-            const input = document.getElementById('expiration-datetime-input');
-            const localDateTime = input.value;
-            if (!localDateTime) {
-                alert('Expiration date cannot be empty.');
-                return;
-            }
-
-            const expirationDate = localDateTime.replace('T', ' ');
-            closeExpirationModal();
-
-            fetch('/api/set-expiration', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    expiration_date: expirationDate,
-                    timezone_offset_minutes: new Date().getTimezoneOffset()
-                })
-            })
-            .then(async response => {
-                const payload = await response.json().catch(() => ({}));
-                if (!response.ok) {
-                    const message = payload.message || 'Failed to set expiration date.';
-                    console.warn('Set expiration failed:', message, payload);
-                    alert(message);
-                    return;
-                }
-                updateSlideshow();
-            })
-            .catch(error => console.error('Error setting expiration:', error));
-        }
-
-        // Handle keyboard shortcuts
-        document.addEventListener('keydown', function(event) {
-            const key = event.key.toLowerCase();
-
-            if (isExpirationModalOpen()) {
-                if (key === 'escape') {
-                    closeExpirationModal();
-                    updateSlideshow();
-                }
-                return;
-            }
-
-            if (key === 't') {
-                toggleOverlays();
-                return;
-            }
-
-            // Duration hotkeys (0-9) work when overlays are visible
-            if (overlaysVisible && key in DURATION_HOTKEYS) {
-                const durationSeconds = DURATION_HOTKEYS[key];
-                fetch('/api/set-duration', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ duration_seconds: durationSeconds })
-                })
-                .then(response => {
-                    if (response.ok) {
-                        updateSlideshow();
-                    }
-                })
-                .catch(error => console.error('Error setting duration:', error));
-                return;
-            }
-
-            if (!overlaysVisible) {
-                return;
-            }
-
-            switch(key) {
-                case 'e':
-                    fetch('/api/expire', { method: 'POST' })
-                        .then(response => {
-                            if (response.ok) {
-                                updateSlideshow();
-                            }
-                        })
-                        .catch(error => console.error('Error expiring image:', error));
-                    break;
-
-                case 'd':
-                    openExpirationModal();
-                    break;
-            }
-        });
-
-        document.getElementById('expiration-modal-content').addEventListener('submit', submitExpirationDate);
-        document.getElementById('expiration-cancel-btn').addEventListener('click', () => {
-            closeExpirationModal();
-            updateSlideshow();
-        });
-
-        // Handle right-click for next image
-        document.addEventListener('contextmenu', function(event) {
-            if (!overlaysVisible) {
-                return;
-            }
-
-            event.preventDefault();
-            fetch('/api/next', { method: 'POST' })
-                .then(response => {
-                    if (response.ok) {
-                        updateSlideshow();
-                    }
-                })
-                .catch(error => console.error('Error advancing to next image:', error));
-        });
-
-        // Initial load
         updateSlideshow();
     </script>
 </body>
