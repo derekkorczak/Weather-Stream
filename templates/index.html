@@ -127,7 +127,7 @@
         let isUpdating = false;
         let updateStartedAtMs = 0;
         const WEATHER_MAP_INDEX = 8;
-        const RESYNC_INTERVAL_SEC = 15;
+        const RESYNC_INTERVAL_SEC = 2;
         const API_FETCH_TIMEOUT_MS = 15000;
         const IMAGE_LOAD_TIMEOUT_MS = 35000;
         const UPDATE_STALE_TIMEOUT_MS = 45000;
@@ -175,16 +175,13 @@
         }
 
         function startCountdownTimer() {
-            if (countdownInterval) clearInterval(countdownInterval);
+            // Always-running tick that polls the server periodically. Never cleared,
+            // so a slow/failed fetch can't freeze the slideshow.
+            if (countdownInterval) return;
             countdownInterval = setInterval(() => {
-                if (currentCountdown <= 0) {
-                    clearInterval(countdownInterval);
-                    updateSlideshow();
-                    return;
-                }
-                currentCountdown -= 1;
+                if (currentCountdown > 0) currentCountdown -= 1;
                 secondsUntilResync -= 1;
-                if (secondsUntilResync <= 0) {
+                if (secondsUntilResync <= 0 || currentCountdown <= 0) {
                     secondsUntilResync = RESYNC_INTERVAL_SEC;
                     updateSlideshow();
                 }
