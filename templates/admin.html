@@ -409,7 +409,7 @@
             }
         }
 
-        function refresh() {
+        function refresh(forceImageReload = false) {
             return fetch('/api/slides')
                 .then(r => r.json())
                 .then(state => {
@@ -420,6 +420,17 @@
                     defaultDuration = state.default_duration;
                     renderGrid(state);
                     renderSummary(state);
+
+                    if (forceImageReload) {
+                        const t = Date.now();
+                        for (const entry of cardCache.values()) {
+                            const baseUrl = entry.lastImgUrl || '';
+                            if (baseUrl) {
+                                const separator = baseUrl.includes('?') ? '&' : '?';
+                                entry.els.img.src = baseUrl + separator + 't=' + t;
+                            }
+                        }
+                    }
                 })
                 .catch(err => console.error('refresh failed', err));
         }
@@ -438,7 +449,7 @@
 
         // Toolbar
         document.getElementById('btn-skip').addEventListener('click', () => postJson('/api/next', {}));
-        document.getElementById('btn-refresh').addEventListener('click', () => refresh());
+        document.getElementById('btn-refresh').addEventListener('click', () => refresh(true));
 
         // Lightbox
         const lightbox = document.getElementById('lightbox');
